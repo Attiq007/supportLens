@@ -1,3 +1,4 @@
+import logging
 import os
 
 import google.generativeai as genai
@@ -5,14 +6,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_api_key = os.getenv("GEMINI_API_KEY")
-if not _api_key:
-    raise RuntimeError(
-        "GEMINI_API_KEY is not set. "
-        "Copy .env.example to .env and add your key from https://aistudio.google.com/app/apikey"
-    )
+logger = logging.getLogger(__name__)
 
-genai.configure(api_key=_api_key)
+_VALID_CATEGORIES = {
+    "Billing",
+    "Refund",
+    "Account Access",
+    "Cancellation",
+    "General Inquiry",
+}
 
 _CHATBOT_SYSTEM = (
     "You are a helpful customer support agent for BillFlow, a SaaS billing platform. "
@@ -41,45 +43,67 @@ Agent response: {bot_response}
 Reply with ONLY the category name. No explanation, no punctuation, just one of:
 Billing, Refund, Account Access, Cancellation, General Inquiry"""
 
-_VALID_CATEGORIES = {
-    "Billing",
-    "Refund",
-    "Account Access",
-    "Cancellation",
-    "General Inquiry",
-}
+_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+_llm_available = bool(_api_key)
 
-_chat_model = genai.GenerativeModel(
-    model_name="gemini-flash-latest",
-    system_instruction=_CHATBOT_SYSTEM,
-)
+_chat_model = None
+_classifier_model = None
 
-_classifier_model = genai.GenerativeModel(model_name="gemini-flash-latest")
+if _llm_available:
+    genai.configure(api_key=_api_key)
+    _chat_model = genai.GenerativeModel(
+        model_name="gemini-flash-latest",
+        system_instruction=_CHATBOT_SYSTEM,
+    )
+    _classifier_model = genai.GenerativeModel(model_name="gemini-flash-latest")
+else:
+    logger.warning("GEMINI_API_KEY not set — LLM features running in degraded mode")
+
+
+def is_available() -> bool:
+    return _llm_available
 
 
 def chat_response(message: str) -> str:
-    response = _chat_model.generate_content(message)
-    return response.text.strip()
+    if not _llm_available:
+        return (
+            "The AI assistant is temporarily unavailable. "
+            "Please contact support directly at support@billflow.com."
+        )
+    try:
+        response = _chat_model.generate_content(message)
+        return response.text.strip()
+    except Exception as exc:
+        logger.error("LLM chat request failed", extra={"error": str(exc), "preview": message[:100]})
+        raise
 
 
 def classify(user_message: str, bot_response: str) -> str:
-    prompt = _CLASSIFIER_PROMPT.format(
-        user_message=user_message,
-        bot_response=bot_response,
-    )
-    response = _classifier_model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(temperature=0),
-    )
-    raw = response.text.strip()
+    if not _llm_available:
+        return "General Inquiry"
+    try:
+        prompt = _CLASSIFIER_PROMPT.format(
+            user_message=user_message,
+            bot_response=bot_response,
+        )
+        response = _classifier_model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(temperature=0),
+        )
+        raw = response.text.strip()
 
-    # Exact match first
-    if raw in _VALID_CATEGORIES:
-        return raw
+        if raw in _VALID_CATEGORIES:
+            return raw
 
-    # Lenient match (handles minor formatting issues)
-    for category in _VALID_CATEGORIES:
-        if category.lower() in raw.lower():
-            return category
+        for category in _VALID_CATEGORIES:
+            if category.lower() in raw.lower():
+                return category
 
-    return "General Inquiry"
+        logger.warning(
+            "Unexpected LLM classification — falling back to General Inquiry",
+            extra={"raw_output": raw},
+        )
+        return "General Inquiry"
+    except Exception as exc:
+        logger.error("LLM classification failed — falling back to General Inquiry", extra={"error": str(exc)})
+        return "General Inquiry"

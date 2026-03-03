@@ -1,16 +1,33 @@
 version: "3.9"
 
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: supportlens
+      POSTGRES_USER: supportlens
+      POSTGRES_PASSWORD: supportlens
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supportlens"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
-    volumes:
-      - db_data:/app/data
+    environment:
+      - DATABASE_URL=postgresql://supportlens:supportlens@db:5432/supportlens
     env_file:
       - .env
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/analytics')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -18,12 +35,10 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "80:80"
     depends_on:
       backend:
         condition: service_healthy
-    environment:
-      - VITE_API_BASE=http://backend:8000
 
 volumes:
   db_data:
