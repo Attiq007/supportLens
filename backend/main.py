@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -173,10 +173,9 @@ def export_traces(
     for t in traces:
         writer.writerow([t.id, t.timestamp.isoformat(), t.category, t.response_time_ms, t.user_message, t.bot_response])
 
-    output.seek(0)
     filename = f"supportlens-traces{'-' + category.lower().replace(' ', '-') if category else ''}.csv"
-    return StreamingResponse(
-        iter([output.getvalue()]),
+    return Response(
+        content=output.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

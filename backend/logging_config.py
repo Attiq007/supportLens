@@ -15,7 +15,7 @@ class _JsonFormatter(logging.Formatter):
     })
 
     def format(self, record: logging.LogRecord) -> str:
-        record.getMessage()
+        record.message = record.getMessage()
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,

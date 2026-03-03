@@ -108,8 +108,8 @@ fi
 # 6. CSV export returns the correct content type
 echo ""
 echo "--- Test: CSV export ---"
-HEADERS=$(curl -sf -I "$BASE_URL/traces/export")
-if echo "$HEADERS" | grep -qi "text/csv"; then
+HEADERS=$(curl -sf -D - -o /dev/null "$BASE_URL/traces/export")
+if echo "$HEADERS" | grep -qi "content-type.*text/csv"; then
     ok "CSV export returns text/csv"
 else
     fail "CSV export did not return text/csv content type"
