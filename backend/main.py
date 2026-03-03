@@ -1,18 +1,21 @@
 import csv
 import io
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+import health as health_mod
 import llm
 from database import Base, engine, get_db
+from logging_config import setup_logging
 from models import Trace
 from schemas import (
     AnalyticsResponse,
@@ -23,18 +26,49 @@ from schemas import (
     TraceResponse,
 )
 
+setup_logging()
+logger = logging.getLogger(__name__)
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="SupportLens API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_origins=["http://localhost:5173", "http://localhost:4173", "http://localhost"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 CATEGORIES = ["Billing", "Refund", "Account Access", "Cancellation", "General Inquiry"]
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    request_id = str(uuid.uuid4())
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "http_request",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "query": str(request.query_params) or None,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+    return response
+
+
+@app.get("/health")
+def health_endpoint(db: Session = Depends(get_db)):
+    body, status_code = health_mod.build_health_response(db)
+    return JSONResponse(content=body, status_code=status_code)
 
 
 @app.post("/chat", response_model=ChatResponse)

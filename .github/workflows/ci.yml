@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff==0.8.0
+      - name: Check backend code quality
+        run: ruff check backend/
+
+  build:
+    name: Build Docker Images
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  e2e:
+    name: End-to-End Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create env file (no API key — app runs in degraded mode)
+        run: echo "GEMINI_API_KEY=" > .env
+      - name: Start services
+        run: docker compose up --build -d
+      - name: Run E2E tests
+        run: bash scripts/e2e_test.sh
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
